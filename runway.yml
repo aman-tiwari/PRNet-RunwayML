@@ -23,6 +23,7 @@ spec:
 # Each build step is executed in the order it appears in the array.
 build_steps:
     - pip install -r requirements.txt
+    - git submodule update --init --recursive
     - mv model\256_256_resfcn256_weight.data-00000-of-00001 PRNet\Data\net-data\
     # The if_gpu and if_cpu directives can be used to run build steps
     # conditionally depending on the build environment.
