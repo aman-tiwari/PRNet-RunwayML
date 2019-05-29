@@ -1,0 +1,5 @@
+runway-python==0.0.57
+Pillow==6.0.0
+numpy==1.16.3
+scipy==1.1.0
+scikit-image==0.15.0

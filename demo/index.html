@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<head>
+    <title>Demo for Runway + PRNet</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.8.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.8.0/addons/p5.dom.min.js"></script>
+</head>
+<body>
+    <h3> <a href="https://github.com/YadiraF/PRNet">PRNet</a> + RunwayML face unwrapping demo </h3>
+    <p> For best results, try to have your face fill 80% of the frame.
+        <br />
+        Left: Output of model. Middle: Face unwrapped using output of model. Right: Input to model
+    </p>
+    <script>
+    let video
+    let uvImg
+    let maskImg
+    let unwrapped
+    let ready = true
+    let videoXOffset
+    let videoWidth
+    
+    function preload() {
+        maskImg = loadImage('uv_face_mask.png')
+    }
+
+    function setup() {
+        colorMode(RGB)
+        createCanvas(768, 256)
+        video = createCapture(VIDEO)
+        unwrapped = createImage(256, 256)
+        textSize(18)
+        fill('black')
+        maskImg.loadPixels()
+    }
+
+    /** 
+     * Compute where the video needs to be drawn on the canvas s.t.
+     * the central 256x256 region is accessible to us with p5's get()
+    */
+    function computeVideoOffsets() {
+        const aspect = video.width / video.height
+        videoWidth = Math.ceil(256 * aspect)
+        videoXOffset = 512 - (videoWidth - 256) / 2
+        video.size(videoWidth, 256)
+        video.hide()
+    }
+
+    function draw() {
+        background('black')
+        if(uvImg != undefined) {
+            image(uvImg, 0, 0)
+            blend(maskImg, 0, 0, 256, 256, 0, 0, 256, 256, MULTIPLY)
+        }
+        // the width & height of the video are only available 
+        // after loadedmetadata != false so we compute offsets then
+        if(video.loadedmetadata && videoWidth == undefined) {
+            computeVideoOffsets()
+        }
+        // draw video onto canvas & get 256x256 sized region
+        image(video, videoXOffset, 0, videoWidth, 256)
+        const frame = get(512, 0, 256, 256)
+        processWithPRNET(frame)
+
+        rect(256, 0, 256, 256)
+        image(unwrapped, 256, 0)
+    }
+
+    /** 
+     * Send frame to Runway and process returned output
+    */
+    function processWithPRNET(frame) {
+        // don't process a request until the previous one has been processed
+        if(ready == true) { ready = false } 
+        else { return }
+        httpPost('http://localhost:8000/process', {
+            'photo': frame.canvas.toDataURL('image/jpeg')
+        }, resp => processUV(JSON.parse(resp), frame))
+    }
+
+    /** 
+     * Process the returned base64'd output of the model and use it to 
+     * unwrap the face in the video
+    */
+    function processUV({uv}, frame) {
+        // Load dataurl in uv into a p5js image
+        const domImage = new Image(256, 256)
+        domImage.src = uv
+        domImage.onload = () => {
+            ready = true
+            uvImg = createImage(256, 256)
+            uvImg.drawingContext.drawImage(domImage, 0, 0)
+            // load p5js images into their .pixels array
+            uvImg.loadPixels()
+            frame.loadPixels()
+            unwrapped.loadPixels()  
+            /** 
+             * Iterate over the pixels of the returned image
+             * Each pixel uvImg[i, j] contains the 3D location of a point on
+             * the face in the input image. The mapping from [i, j] to face location
+             * is on a standardised parametrisation of a face (a uv unwrapping)
+             * 
+             * Here we use that location to extract the pixel from the video and
+             * place it at [i, j], "unwrapping" the face
+            */
+            for(let i = 0; i < 256; i++) {
+                for(let j = 0; j < 256; j++) {
+                    // see https://p5js.org/reference/#/p5/pixels if this doesn't make sense
+                    const flatIndex = (j * 256 * 4 + i * 4)
+                    const u = uvImg.pixels[flatIndex] 
+                    const v = uvImg.pixels[flatIndex + 1]
+
+                    /** Skip the masked out regions, the output contains meaningless data for it
+                     */
+                    if(maskImg.pixels[flatIndex] == 0) continue
+                    if(u < 30 && v < 30) continue
+                    const flatUVIndex = (v * 256 * 4 + u * 4)
+                    unwrapped.pixels[flatIndex] = frame.pixels[flatUVIndex]
+                    unwrapped.pixels[flatIndex + 1] = frame.pixels[flatUVIndex + 1]
+                    unwrapped.pixels[flatIndex + 2] = frame.pixels[flatUVIndex + 2]
+                    unwrapped.pixels[flatIndex + 3] = 255
+                }
+            }
+            unwrapped.updatePixels()
+        }
+    }
+
+    </script>
+</body>
